@@ -1,0 +1,104 @@
+{
+  "name": "nntrainer-visualizer",
+  "displayName": "NNTrainer Visualizer",
+  "description": "Interactive flow graph visualizer for NNTrainer .ini model files with .bin weight inspection",
+  "version": "1.0.0",
+  "publisher": "nntrainer",
+  "engines": { "vscode": "^1.74.0" },
+  "categories": ["Visualization", "Machine Learning"],
+
+  "activationEvents": [
+    "onCommand:nntrainer.visualize",
+    "onCommand:nntrainer.visualizeFromExplorer",
+    "onView:nntrainerSidebar",
+    "workspaceContains:**/*.ini"
+  ],
+
+  "main": "./src/extension.js",
+
+  "contributes": {
+
+    "commands": [
+      {
+        "command": "nntrainer.visualize",
+        "title": "NNTrainer: Visualize Model",
+        "icon": "$(circuit-board)"
+      },
+      {
+        "command": "nntrainer.visualizeFromExplorer",
+        "title": "Open in NNTrainer Visualizer",
+        "icon": "$(circuit-board)"
+      },
+      {
+        "command": "nntrainer.refreshSidebar",
+        "title": "Refresh",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "nntrainer.openFromSidebar",
+        "title": "Open Model",
+        "icon": "$(go-to-file)"
+      }
+    ],
+
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "nntrainer-panel",
+          "title": "NNTrainer Visualizer",
+          "icon": "$(circuit-board)"
+        }
+      ]
+    },
+
+    "views": {
+      "nntrainer-panel": [
+        {
+          "id": "nntrainerSidebar",
+          "name": "Models in Workspace",
+          "icon": "$(circuit-board)"
+        }
+      ]
+    },
+
+    "menus": {
+      "explorer/context": [
+        {
+          "when": "resourceExtname == .ini",
+          "command": "nntrainer.visualizeFromExplorer",
+          "group": "navigation@1"
+        }
+      ],
+      "editor/title": [
+        {
+          "when": "resourceExtname == .ini",
+          "command": "nntrainer.visualize",
+          "group": "navigation"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "nntrainer.refreshSidebar",
+          "when": "view == nntrainerSidebar",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "nntrainer.openFromSidebar",
+          "when": "view == nntrainerSidebar && viewItem == iniFile",
+          "group": "inline"
+        }
+      ]
+    },
+
+    "keybindings": [
+      {
+        "command": "nntrainer.visualize",
+        "key": "ctrl+shift+v",
+        "mac": "cmd+shift+v",
+        "when": "resourceExtname == .ini"
+      }
+    ]
+  }
+}
