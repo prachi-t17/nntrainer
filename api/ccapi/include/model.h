@@ -18,6 +18,7 @@
 
 #if __cplusplus >= MIN_CPP_VERSION
 
+#include <map>
 #include <string>
 #include <type_traits>
 #include <vector>
@@ -31,10 +32,13 @@
 
 namespace nntrainer {
 class RunLayerContext;
-}
+class Tensor;
+} // namespace nntrainer
 /** Define more aliases for the model in the API */
 namespace ml {
 namespace train {
+
+class Tensor; // Forward declaration for graph-based compile
 
 /**
  * @brief     Statistics from running or training a model
@@ -93,7 +97,10 @@ for inference and training without any configurations*/
     ML_TRAIN_MODEL_FORMAT_FLATBUFFER,             /**< flatbuffer file */
   MODEL_FORMAT_ONNX = ML_TRAIN_MODEL_FORMAT_ONNX, /**< ONNX file */
 
-  MODEL_FORMAT_QNN = ML_TRAIN_MODEL_FORMAT_QNN /**< qnn binary file */
+  MODEL_FORMAT_QNN = ML_TRAIN_MODEL_FORMAT_QNN, /**< qnn binary file */
+
+  MODEL_FORMAT_SAFETENSORS =
+    ML_TRAIN_MODEL_FORMAT_SAFETENSORS, /**< safetensors file */
 };
 
 /**
@@ -142,6 +149,52 @@ public:
   virtual int compile(ExecutionMode exec_mode_ = ExecutionMode::TRAIN) = 0;
 
   /**
+   * @brief     Compile from symbolic tensor graph.
+   *
+   * Extracts the computation graph by walking backwards from output to input,
+   * then adds all discovered layers (with input_layers connections) and
+   * compiles. This replaces manual addLayer() + input_layers strings.
+   *
+   * @param input  Leaf symbolic tensor (model input)
+   * @param output Output symbolic tensor (model output)
+   * @param mode   Execution mode (default: TRAIN)
+   * @retval #ML_ERROR_NONE Successful.
+   */
+  int compile(Tensor &input, Tensor &output,
+              ExecutionMode mode = ExecutionMode::TRAIN);
+
+  /**
+   * @brief     Compile from symbolic tensor graph with multiple outputs.
+   *
+   * Extracts the computation graph by walking backwards from each output to
+   * the input, then adds all discovered layers and compiles. This supports
+   * models with multiple output heads (e.g., YOLOv3 with 3 loss layers).
+   *
+   * @param input   Leaf symbolic tensor (model input)
+   * @param outputs Vector of output symbolic tensors
+   * @param mode    Execution mode (default: TRAIN)
+   * @retval #ML_ERROR_NONE Successful.
+   */
+  int compile(Tensor &input, std::vector<Tensor> &outputs,
+              ExecutionMode mode = ExecutionMode::TRAIN);
+
+  /**
+   * @brief     Compile from symbolic tensor graph with multiple inputs and
+   *            multiple outputs.
+   *
+   * Extracts the computation graph by walking backwards from each output to
+   * discover all layers. Supports models with multiple input heads and
+   * multiple output heads.
+   *
+   * @param inputs  Vector of leaf symbolic tensors (model inputs)
+   * @param outputs Vector of output symbolic tensors
+   * @param mode    Execution mode (default: TRAIN)
+   * @retval #ML_ERROR_NONE Successful.
+   */
+  int compile(std::vector<Tensor> &inputs, std::vector<Tensor> &outputs,
+              ExecutionMode mode = ExecutionMode::TRAIN);
+
+  /**
    * @brief     Initialize Network. This should be called after setting the
    * property and compiling.
    * @retval #ML_ERROR_NONE Successful.
@@ -158,12 +211,29 @@ public:
 
   /**
    * @brief  save model states and training parameters from a file
-   * @param file_path file_path to save the model, if full path is not
+   * @param[in] file_path file_path to save the model, if full path is not
    * given, it should be saved inside working directory
-   * @param format format to save parameters
+   * @param[in] format format to save parameters
+   * @param[in] dtype default data type to save all weights. Only Q4_0 is
+   *            currently supported as the target type. Conversion is only
+   *            supported when the current weight type is FP32.
+   * @param[in] layer_dtype_map a map of layer name to data type. If a layer
+   * name is found in this map, its weights are saved with the specific data
+   *            type instead of @a dtype.
+   * @param[in] target_isa target ISA (Instruction Set Architecture) format for
+   * quantization (DEFAULT/X86/ARM). Enables cross-platform quantization, e.g.,
+   * quantizing on x86 but saving in ARM format.
+   * @note When @a dtype equals the current weight type of a layer and the layer
+   *       is not in @a layer_dtype_map , the weights are saved as-is without
+   *       any conversion.
+   * @note save-with-dtype only supports the `MODEL_FORMAT_BIN` model format
    */
-  virtual void save(const std::string &file_path,
-                    ModelFormat format = ModelFormat::MODEL_FORMAT_BIN) = 0;
+  virtual void
+  save(const std::string &file_path,
+       ModelFormat format = ModelFormat::MODEL_FORMAT_BIN,
+       TensorDim::DataType dtype = TensorDim::DataType::NONE,
+       const std::map<std::string, TensorDim::DataType> &layer_dtype_map = {},
+       ISA target_isa = ISA::DEFAULT) = 0;
 
   /**
    * @brief  load model with regard to the format
@@ -264,6 +334,20 @@ public:
                void *user_data = nullptr) = 0;
 
   /**
+   * @brief Look up a graph-managed tensor by name.
+   *
+   * Used by the symbolic ml::train::Tensor API to wire a user-facing
+   * Tensor handle to its corresponding graph placeholder after compile.
+   * Once wired, host-side updates flow through `tensor.setData(buf)` instead
+   * of going through a separate setExternalTensors call by name.
+   *
+   * @param name tensor or input-layer name
+   * @return Tensor* pointer to the graph-owned tensor, or nullptr if no
+   *         such tensor exists in the compiled graph.
+   */
+  virtual nntrainer::Tensor *getTensor(const std::string &name) = 0;
+
+  /**
    * @brief     set optimizer for the neural network model
    * @retval #ML_ERROR_NONE Successful.
    * @retval #ML_ERROR_INVALID_PARAMETER invalid parameter.
@@ -311,10 +395,12 @@ public:
    * @param[in] init_seq_len initial sequence length
    * @param[in] from current working step index
    * @param[in] to next working step index
-   * @param[in] output_hidden_state return last hidden state if true else return
-   * all hidden state
+   * @param[in] output_hidden_state (NYI) true to return all hidden state,
+   * false to return last hidden state
    * @retval list of output as float *
-   * @note The output memory must not be freed by the caller
+   * @note If output_hidden_state is false, the output memory must be freed by
+   * the caller after use. Otherwise, the output memory must not be freed by the
+   * caller.
    */
   virtual std::vector<float *>
   incremental_inference(unsigned int batch, const std::vector<float *> &input,

@@ -269,11 +269,16 @@ public:
 
   /**
    * @copydoc Model::save(const std::string &file_path, ml::train::ModelFormat
-   * format);
+   * format, TensorDim::DataType dtype, const std::map<std::string,
+   * TensorDim::DataType> &layer_dtype_map, ml::train::ISA
+   * target_device);
    */
-  void save(const std::string &file_path,
-            ml::train::ModelFormat format =
-              ml::train::ModelFormat::MODEL_FORMAT_BIN) override;
+  void
+  save(const std::string &file_path,
+       ml::train::ModelFormat format = ml::train::ModelFormat::MODEL_FORMAT_BIN,
+       TensorDim::DataType dtype = TensorDim::DataType::NONE,
+       const std::map<std::string, TensorDim::DataType> &layer_dtype_map = {},
+       ml::train::ISA target_isa = ml::train::ISA::DEFAULT) override;
 
   /**
    * @copydoc Model::load(const std::string &file_path, ml::train::ModelFormat
@@ -403,10 +408,12 @@ public:
    * @param[in] init_seq_len initial sequence length
    * @param[in] from current working step index
    * @param[in] to next working step index
-   * @param[in] output_hidden_state return last hidden state if true else return
-   * all hidden state
+   * @param[in] output_hidden_state (NYI) true to return all hidden state,
+   * false to return last hidden state only
    * @retval list of output as float *
-   * @note The output memory must not be freed by the caller
+   * @note If output_hidden_state is false, the output memory must be freed by
+   * the caller after use. Otherwise, the output memory must not be freed by the
+   * caller.
    */
   std::vector<float *>
   incremental_inference(unsigned int batch, const std::vector<float *> &input,
@@ -450,6 +457,13 @@ public:
                        RunLayerContext & /**< rc */, void *user_data)>
       fn,
     void *user_data = nullptr) override;
+
+  /**
+   * @copydoc ml::train::Model::getTensor(const std::string &)
+   */
+  Tensor *getTensor(const std::string &name) override {
+    return model_graph.getTensor(name);
+  }
 
   /**
    * @brief     Run NeuralNetwork train with callback function by user
@@ -701,6 +715,17 @@ private:
     nullptr; /** Configurations bound to current engine */
 
   NetworkGraph model_graph; /** Network Model Graph */
+
+  /**< Set in compile() for graphs that contain a QNN/HTP engine. When true,
+   * inference() reuses the already-allocated tensor pool across calls instead
+   * of deallocating+reallocating it every call. QNN registers each activation
+   * tensor's rpcmem buffer with the DSP (rpcmem_to_fd/memRegister), so the
+   * per-tensor address must stay stable across decode tokens; reallocating
+   * every token hands out new addresses, defeats the registration cache, and
+   * churns the scarce contiguous CMA pool (rpcmem_to_fd failures under app UI
+   * dmabuf pressure). CPU/GPU paths keep the realloc-per-call behavior, which
+   * they rely on for correct per-call tensor state. */
+  bool reuse_inference_tensor_pool_ = false;
 
   GraphRepresentation graph_representation; /** Unsorted graph representation */
 

@@ -4,6 +4,10 @@ on:
   pull_request:
     branches: [ main ]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   cross-build:
     runs-on: windows-latest
@@ -93,4 +97,4 @@ jobs:
         run: Get-ChildItem -Path build_cross\test\unittest -Recurse
 
       - name: Run Test Suite
-        run: meson test -C build_cross --no-rebuild
+        run: meson test -C build_cross --no-rebuild --print-errorlogs

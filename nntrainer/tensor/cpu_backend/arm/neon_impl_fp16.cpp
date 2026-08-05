@@ -15,13 +15,13 @@
 #include <matrix_transpose_neon.h>
 #include <memory>
 #include <neon_impl.h>
-#include <neon_setting.h>
 #include <nntrainer_error.h>
 #ifdef ARMV7
 #include <armv7_neon.h>
 #endif
 
 #include <iostream>
+#include <thread_manager.h>
 
 namespace nntrainer::neon {
 bool is_valid(const unsigned int N, const __fp16 *input) {
@@ -326,11 +326,6 @@ void hgemv(const __fp16 *A, const __fp16 *X, __fp16 *Y, uint32_t M, uint32_t N,
 
 void hgemv_transpose(const __fp16 *A, const __fp16 *X, __fp16 *Y, uint32_t M,
                      uint32_t N, float alpha, float beta) {
-#ifdef OMP_NUM_THREADS
-  set_gemv_num_threads(OMP_NUM_THREADS);
-#endif
-  size_t GEMV_NUM_THREADS = get_gemv_num_threads();
-
   float *Y32 = new float[N];
   unsigned int idx = 0;
   for (; N - idx >= 8; idx += 8) {
@@ -357,55 +352,58 @@ void hgemv_transpose(const __fp16 *A, const __fp16 *X, __fp16 *Y, uint32_t M,
     __fp16 x[16];
     vst1q_f16(&x[0], vmulq_n_f16(vld1q_f16(&X[i]), alpha));
     vst1q_f16(&x[8], vmulq_n_f16(vld1q_f16(&X[i + 8]), alpha));
-#pragma omp parallel for schedule(guided) num_threads(GEMV_NUM_THREADS)
-    for (unsigned int idx = 0; idx < N8; idx += 8) {
-      float16x8_t wvec0_7_f16 = vmulq_n_f16(vld1q_f16(&A[i * N + idx]), x[0]);
-      wvec0_7_f16 =
-        vfmaq_n_f16(wvec0_7_f16, vld1q_f16(&A[(i + 1) * N + idx]), x[1]);
-      wvec0_7_f16 =
-        vfmaq_n_f16(wvec0_7_f16, vld1q_f16(&A[(i + 2) * N + idx]), x[2]);
-      wvec0_7_f16 =
-        vfmaq_n_f16(wvec0_7_f16, vld1q_f16(&A[(i + 3) * N + idx]), x[3]);
+    {
+      auto &tm = ThreadManager::Global();
+      tm.parallel_for(0, static_cast<size_t>(N8 / 8), [&](size_t _idx) {
+        size_t idx = _idx * 8;
+        float16x8_t wvec0_7_f16 = vmulq_n_f16(vld1q_f16(&A[i * N + idx]), x[0]);
+        wvec0_7_f16 =
+          vfmaq_n_f16(wvec0_7_f16, vld1q_f16(&A[(i + 1) * N + idx]), x[1]);
+        wvec0_7_f16 =
+          vfmaq_n_f16(wvec0_7_f16, vld1q_f16(&A[(i + 2) * N + idx]), x[2]);
+        wvec0_7_f16 =
+          vfmaq_n_f16(wvec0_7_f16, vld1q_f16(&A[(i + 3) * N + idx]), x[3]);
 
-      float16x8_t w2vec0_7_f16 =
-        vmulq_n_f16(vld1q_f16(&A[(i + 4) * N + idx]), x[4]);
-      w2vec0_7_f16 =
-        vfmaq_n_f16(w2vec0_7_f16, vld1q_f16(&A[(i + 5) * N + idx]), x[5]);
-      w2vec0_7_f16 =
-        vfmaq_n_f16(w2vec0_7_f16, vld1q_f16(&A[(i + 6) * N + idx]), x[6]);
-      w2vec0_7_f16 =
-        vfmaq_n_f16(w2vec0_7_f16, vld1q_f16(&A[(i + 7) * N + idx]), x[7]);
+        float16x8_t w2vec0_7_f16 =
+          vmulq_n_f16(vld1q_f16(&A[(i + 4) * N + idx]), x[4]);
+        w2vec0_7_f16 =
+          vfmaq_n_f16(w2vec0_7_f16, vld1q_f16(&A[(i + 5) * N + idx]), x[5]);
+        w2vec0_7_f16 =
+          vfmaq_n_f16(w2vec0_7_f16, vld1q_f16(&A[(i + 6) * N + idx]), x[6]);
+        w2vec0_7_f16 =
+          vfmaq_n_f16(w2vec0_7_f16, vld1q_f16(&A[(i + 7) * N + idx]), x[7]);
 
-      float16x8_t w3vec0_7_f16 =
-        vmulq_n_f16(vld1q_f16(&A[(i + 8) * N + idx]), x[8]);
-      w3vec0_7_f16 =
-        vfmaq_n_f16(w3vec0_7_f16, vld1q_f16(&A[(i + 9) * N + idx]), x[9]);
-      w3vec0_7_f16 =
-        vfmaq_n_f16(w3vec0_7_f16, vld1q_f16(&A[(i + 10) * N + idx]), x[10]);
-      w3vec0_7_f16 =
-        vfmaq_n_f16(w3vec0_7_f16, vld1q_f16(&A[(i + 11) * N + idx]), x[11]);
+        float16x8_t w3vec0_7_f16 =
+          vmulq_n_f16(vld1q_f16(&A[(i + 8) * N + idx]), x[8]);
+        w3vec0_7_f16 =
+          vfmaq_n_f16(w3vec0_7_f16, vld1q_f16(&A[(i + 9) * N + idx]), x[9]);
+        w3vec0_7_f16 =
+          vfmaq_n_f16(w3vec0_7_f16, vld1q_f16(&A[(i + 10) * N + idx]), x[10]);
+        w3vec0_7_f16 =
+          vfmaq_n_f16(w3vec0_7_f16, vld1q_f16(&A[(i + 11) * N + idx]), x[11]);
 
-      float16x8_t w4vec0_7_f16 =
-        vmulq_n_f16(vld1q_f16(&A[(i + 12) * N + idx]), x[12]);
-      w4vec0_7_f16 =
-        vfmaq_n_f16(w4vec0_7_f16, vld1q_f16(&A[(i + 13) * N + idx]), x[13]);
-      w4vec0_7_f16 =
-        vfmaq_n_f16(w4vec0_7_f16, vld1q_f16(&A[(i + 14) * N + idx]), x[14]);
-      w4vec0_7_f16 =
-        vfmaq_n_f16(w4vec0_7_f16, vld1q_f16(&A[(i + 15) * N + idx]), x[15]);
+        float16x8_t w4vec0_7_f16 =
+          vmulq_n_f16(vld1q_f16(&A[(i + 12) * N + idx]), x[12]);
+        w4vec0_7_f16 =
+          vfmaq_n_f16(w4vec0_7_f16, vld1q_f16(&A[(i + 13) * N + idx]), x[13]);
+        w4vec0_7_f16 =
+          vfmaq_n_f16(w4vec0_7_f16, vld1q_f16(&A[(i + 14) * N + idx]), x[14]);
+        w4vec0_7_f16 =
+          vfmaq_n_f16(w4vec0_7_f16, vld1q_f16(&A[(i + 15) * N + idx]), x[15]);
 
-      wvec0_7_f16 = vaddq_f16(wvec0_7_f16, w3vec0_7_f16);
-      w2vec0_7_f16 = vaddq_f16(w2vec0_7_f16, w4vec0_7_f16);
+        wvec0_7_f16 = vaddq_f16(wvec0_7_f16, w3vec0_7_f16);
+        w2vec0_7_f16 = vaddq_f16(w2vec0_7_f16, w4vec0_7_f16);
 
-      float32x4_t y0_3 = vaddq_f32(vld1q_f32(&Y32[idx]),
-                                   vcvt_f32_f16(vget_low_f16(wvec0_7_f16)));
-      y0_3 = vaddq_f32(y0_3, vcvt_f32_f16(vget_low_f16(w2vec0_7_f16)));
-      float32x4_t y4_7 = vaddq_f32(vld1q_f32(&Y32[idx + 4]),
-                                   vcvt_f32_f16(vget_high_f16(wvec0_7_f16)));
-      y4_7 = vaddq_f32(y4_7, vcvt_f32_f16(vget_high_f16(w2vec0_7_f16)));
+        float32x4_t y0_3 = vaddq_f32(vld1q_f32(&Y32[idx]),
+                                     vcvt_f32_f16(vget_low_f16(wvec0_7_f16)));
+        y0_3 = vaddq_f32(y0_3, vcvt_f32_f16(vget_low_f16(w2vec0_7_f16)));
+        float32x4_t y4_7 = vaddq_f32(vld1q_f32(&Y32[idx + 4]),
+                                     vcvt_f32_f16(vget_high_f16(wvec0_7_f16)));
+        y4_7 = vaddq_f32(y4_7, vcvt_f32_f16(vget_high_f16(w2vec0_7_f16)));
 
-      vst1q_f32(&Y32[idx], y0_3);
-      vst1q_f32(&Y32[idx + 4], y4_7);
+        vst1q_f32(&Y32[idx], y0_3);
+        vst1q_f32(&Y32[idx + 4], y4_7);
+      });
     }
 
     if (N != N8) {
@@ -487,41 +485,44 @@ void hgemv_transpose(const __fp16 *A, const __fp16 *X, __fp16 *Y, uint32_t M,
         if (n < 4)
           Y32[idx + n] = y0_3[n];
         else
-          Y32[idx + n] = y4_7[n];
+          Y32[idx + n] = y4_7[n - 4];
       }
     }
   }
   for (; M - i >= 8; i += 8) {
     __fp16 x[8];
     vst1q_f16(&x[0], vmulq_n_f16(vld1q_f16(&X[i]), alpha));
-#pragma omp parallel for schedule(guided) num_threads(GEMV_NUM_THREADS)
-    for (unsigned int idx = 0; idx < N8; idx += 8) {
-      float16x8_t wvec0_7_f16 = vmulq_n_f16(vld1q_f16(&A[i * N + idx]), x[0]);
-      wvec0_7_f16 =
-        vfmaq_n_f16(wvec0_7_f16, vld1q_f16(&A[(i + 1) * N + idx]), x[1]);
-      wvec0_7_f16 =
-        vfmaq_n_f16(wvec0_7_f16, vld1q_f16(&A[(i + 2) * N + idx]), x[2]);
-      wvec0_7_f16 =
-        vfmaq_n_f16(wvec0_7_f16, vld1q_f16(&A[(i + 3) * N + idx]), x[3]);
+    {
+      auto &tm = ThreadManager::Global();
+      tm.parallel_for(0, static_cast<size_t>(N8 / 8), [&](size_t _idx) {
+        size_t idx = _idx * 8;
+        float16x8_t wvec0_7_f16 = vmulq_n_f16(vld1q_f16(&A[i * N + idx]), x[0]);
+        wvec0_7_f16 =
+          vfmaq_n_f16(wvec0_7_f16, vld1q_f16(&A[(i + 1) * N + idx]), x[1]);
+        wvec0_7_f16 =
+          vfmaq_n_f16(wvec0_7_f16, vld1q_f16(&A[(i + 2) * N + idx]), x[2]);
+        wvec0_7_f16 =
+          vfmaq_n_f16(wvec0_7_f16, vld1q_f16(&A[(i + 3) * N + idx]), x[3]);
 
-      float16x8_t w2vec0_7_f16 =
-        vmulq_n_f16(vld1q_f16(&A[(i + 4) * N + idx]), x[4]);
-      w2vec0_7_f16 =
-        vfmaq_n_f16(w2vec0_7_f16, vld1q_f16(&A[(i + 5) * N + idx]), x[5]);
-      w2vec0_7_f16 =
-        vfmaq_n_f16(w2vec0_7_f16, vld1q_f16(&A[(i + 6) * N + idx]), x[6]);
-      w2vec0_7_f16 =
-        vfmaq_n_f16(w2vec0_7_f16, vld1q_f16(&A[(i + 7) * N + idx]), x[7]);
+        float16x8_t w2vec0_7_f16 =
+          vmulq_n_f16(vld1q_f16(&A[(i + 4) * N + idx]), x[4]);
+        w2vec0_7_f16 =
+          vfmaq_n_f16(w2vec0_7_f16, vld1q_f16(&A[(i + 5) * N + idx]), x[5]);
+        w2vec0_7_f16 =
+          vfmaq_n_f16(w2vec0_7_f16, vld1q_f16(&A[(i + 6) * N + idx]), x[6]);
+        w2vec0_7_f16 =
+          vfmaq_n_f16(w2vec0_7_f16, vld1q_f16(&A[(i + 7) * N + idx]), x[7]);
 
-      float32x4_t y0_3 = vaddq_f32(vld1q_f32(&Y32[idx]),
-                                   vcvt_f32_f16(vget_low_f16(wvec0_7_f16)));
-      y0_3 = vaddq_f32(y0_3, vcvt_f32_f16(vget_low_f16(w2vec0_7_f16)));
-      float32x4_t y4_7 = vaddq_f32(vld1q_f32(&Y32[idx + 4]),
-                                   vcvt_f32_f16(vget_high_f16(wvec0_7_f16)));
-      y4_7 = vaddq_f32(y4_7, vcvt_f32_f16(vget_high_f16(w2vec0_7_f16)));
+        float32x4_t y0_3 = vaddq_f32(vld1q_f32(&Y32[idx]),
+                                     vcvt_f32_f16(vget_low_f16(wvec0_7_f16)));
+        y0_3 = vaddq_f32(y0_3, vcvt_f32_f16(vget_low_f16(w2vec0_7_f16)));
+        float32x4_t y4_7 = vaddq_f32(vld1q_f32(&Y32[idx + 4]),
+                                     vcvt_f32_f16(vget_high_f16(wvec0_7_f16)));
+        y4_7 = vaddq_f32(y4_7, vcvt_f32_f16(vget_high_f16(w2vec0_7_f16)));
 
-      vst1q_f32(&Y32[idx], y0_3);
-      vst1q_f32(&Y32[idx + 4], y4_7);
+        vst1q_f32(&Y32[idx], y0_3);
+        vst1q_f32(&Y32[idx + 4], y4_7);
+      });
     }
 
     if (N != N8) {
@@ -575,32 +576,35 @@ void hgemv_transpose(const __fp16 *A, const __fp16 *X, __fp16 *Y, uint32_t M,
         if (n < 4)
           Y32[idx + n] = y0_3[n];
         else
-          Y32[idx + n] = y4_7[n];
+          Y32[idx + n] = y4_7[n - 4];
       }
     }
   }
   for (; M - i >= 4; i += 4) {
     __fp16 x[4];
     vst1_f16(&x[0], vmul_n_f16(vld1_f16(&X[i]), alpha));
-#pragma omp parallel for schedule(guided) num_threads(GEMV_NUM_THREADS)
-    for (unsigned int idx = 0; idx < N8; idx += 8) {
-      float16x8_t wvec0_7_f16 = vmulq_n_f16(vld1q_f16(&A[i * N + idx]), x[0]);
-      wvec0_7_f16 =
-        vfmaq_n_f16(wvec0_7_f16, vld1q_f16(&A[(i + 1) * N + idx]), x[1]);
-      float16x8_t w2vec0_7_f16 =
-        vmulq_n_f16(vld1q_f16(&A[(i + 2) * N + idx]), x[2]);
-      w2vec0_7_f16 =
-        vfmaq_n_f16(w2vec0_7_f16, vld1q_f16(&A[(i + 3) * N + idx]), x[3]);
+    {
+      auto &tm = ThreadManager::Global();
+      tm.parallel_for(0, static_cast<size_t>(N8 / 8), [&](size_t _idx) {
+        size_t idx = _idx * 8;
+        float16x8_t wvec0_7_f16 = vmulq_n_f16(vld1q_f16(&A[i * N + idx]), x[0]);
+        wvec0_7_f16 =
+          vfmaq_n_f16(wvec0_7_f16, vld1q_f16(&A[(i + 1) * N + idx]), x[1]);
+        float16x8_t w2vec0_7_f16 =
+          vmulq_n_f16(vld1q_f16(&A[(i + 2) * N + idx]), x[2]);
+        w2vec0_7_f16 =
+          vfmaq_n_f16(w2vec0_7_f16, vld1q_f16(&A[(i + 3) * N + idx]), x[3]);
 
-      float32x4_t y0_3 = vaddq_f32(vld1q_f32(&Y32[idx]),
-                                   vcvt_f32_f16(vget_low_f16(wvec0_7_f16)));
-      y0_3 = vaddq_f32(y0_3, vcvt_f32_f16(vget_low_f16(w2vec0_7_f16)));
-      float32x4_t y4_7 = vaddq_f32(vld1q_f32(&Y32[idx + 4]),
-                                   vcvt_f32_f16(vget_high_f16(wvec0_7_f16)));
-      y4_7 = vaddq_f32(y4_7, vcvt_f32_f16(vget_high_f16(w2vec0_7_f16)));
+        float32x4_t y0_3 = vaddq_f32(vld1q_f32(&Y32[idx]),
+                                     vcvt_f32_f16(vget_low_f16(wvec0_7_f16)));
+        y0_3 = vaddq_f32(y0_3, vcvt_f32_f16(vget_low_f16(w2vec0_7_f16)));
+        float32x4_t y4_7 = vaddq_f32(vld1q_f32(&Y32[idx + 4]),
+                                     vcvt_f32_f16(vget_high_f16(wvec0_7_f16)));
+        y4_7 = vaddq_f32(y4_7, vcvt_f32_f16(vget_high_f16(w2vec0_7_f16)));
 
-      vst1q_f32(&Y32[idx], y0_3);
-      vst1q_f32(&Y32[idx + 4], y4_7);
+        vst1q_f32(&Y32[idx], y0_3);
+        vst1q_f32(&Y32[idx + 4], y4_7);
+      });
     }
     if (N != N8) {
       unsigned int idx = N8;
@@ -638,22 +642,25 @@ void hgemv_transpose(const __fp16 *A, const __fp16 *X, __fp16 *Y, uint32_t M,
         if (n < 4)
           Y32[idx + n] = y0_3[n];
         else
-          Y32[idx + n] = y4_7[n];
+          Y32[idx + n] = y4_7[n - 4];
       }
     }
   }
   for (; i < M; ++i) {
     __fp16 x = alpha * (X[i]);
-#pragma omp parallel for schedule(guided) num_threads(GEMV_NUM_THREADS)
-    for (unsigned int idx = 0; idx < N8; idx += 8) {
-      float16x8_t wvec0_7_f16 = vmulq_n_f16(vld1q_f16(&A[i * N + idx]), x);
-      float32x4_t y0_3 = vaddq_f32(vld1q_f32(&Y32[idx]),
-                                   vcvt_f32_f16(vget_low_f16(wvec0_7_f16)));
-      float32x4_t y4_7 = vaddq_f32(vld1q_f32(&Y32[idx + 4]),
-                                   vcvt_f32_f16(vget_high_f16(wvec0_7_f16)));
+    {
+      auto &tm = ThreadManager::Global();
+      tm.parallel_for(0, static_cast<size_t>(N8 / 8), [&](size_t _idx) {
+        size_t idx = _idx * 8;
+        float16x8_t wvec0_7_f16 = vmulq_n_f16(vld1q_f16(&A[i * N + idx]), x);
+        float32x4_t y0_3 = vaddq_f32(vld1q_f32(&Y32[idx]),
+                                     vcvt_f32_f16(vget_low_f16(wvec0_7_f16)));
+        float32x4_t y4_7 = vaddq_f32(vld1q_f32(&Y32[idx + 4]),
+                                     vcvt_f32_f16(vget_high_f16(wvec0_7_f16)));
 
-      vst1q_f32(&Y32[idx], y0_3);
-      vst1q_f32(&Y32[idx + 4], y4_7);
+        vst1q_f32(&Y32[idx], y0_3);
+        vst1q_f32(&Y32[idx + 4], y4_7);
+      });
     }
     if (N != N8) {
       unsigned int idx = N8;
@@ -1307,18 +1314,23 @@ void swiglu(const unsigned int N, __fp16 *X, __fp16 *Y, __fp16 *Z) {
   for (; N - i >= 8; i += 8) {
     float16x8_t y0_7 = vld1q_f16(&Y[i]);
     float16x8_t z0_7 = vld1q_f16(&Z[i]);
-    float16x8_t y0_7_minus = vmulq_n_f16(y0_7, -1);
 
-    float32x4_t exp0_3 = exp_ps(vcvt_f32_f16(vget_low_f16(y0_7_minus)));
-    float32x4_t exp4_7 = exp_ps(vcvt_f32_f16(vget_high_f16(y0_7_minus)));
+    // Compute silu(Y) * Z entirely in FP32 and narrow to FP16 only on store.
+    // Doing the silu division and the * Z product in FP16 overflows fp16 max
+    // (65504) on large MLP intermediates -> Inf -> NaN downstream. The
+    // scalar tail below already computes in fp32; this matches it.
+    float32x4_t yl = vcvt_f32_f16(vget_low_f16(y0_7));
+    float32x4_t yh = vcvt_f32_f16(vget_high_f16(y0_7));
+    float32x4_t zl = vcvt_f32_f16(vget_low_f16(z0_7));
+    float32x4_t zh = vcvt_f32_f16(vget_high_f16(z0_7));
 
-    float16x8_t exp0_7 =
-      vcombine_f16(vcvt_f16_f32(exp0_3), vcvt_f16_f32(exp4_7));
-    exp0_7 = vaddq_f16(exp0_7, vmovq_n_f16(1.f));
-    exp0_7 = vdivq_f16(y0_7, exp0_7);
-    exp0_7 = vmulq_f16(exp0_7, z0_7);
+    float32x4_t one = vmovq_n_f32(1.f);
+    float32x4_t sl = vdivq_f32(yl, vaddq_f32(exp_ps(vnegq_f32(yl)), one));
+    float32x4_t sh = vdivq_f32(yh, vaddq_f32(exp_ps(vnegq_f32(yh)), one));
+    sl = vmulq_f32(sl, zl);
+    sh = vmulq_f32(sh, zh);
 
-    vst1q_f16(&X[i], exp0_7);
+    vst1q_f16(&X[i], vcombine_f16(vcvt_f16_f32(sl), vcvt_f16_f32(sh)));
   }
   while (i < N) {
     X[i] = (Y[i] / (1.f + std::exp(static_cast<float>(-Y[i])))) * Z[i];
@@ -1394,69 +1406,79 @@ inline static float16x8_t exp_f16x8(float16x8_t x) {
 }
 
 // Static helper function for softmax_row_inplace with __fp16 sink
-// Performs softmax along the row dimension (sequence length) for each head.
 // Includes handling of a "sink" token (attention sink)
 static void softmax_row_inplace_with_fp16_sink(__fp16 *qk_out, size_t start_row,
                                                size_t end_row, size_t num_heads,
                                                __fp16 *sink) {
-  size_t row_range = end_row - start_row;
-  const size_t full_blocks = (num_heads / 8) * 8;
+  const size_t vec_end = num_heads & ~((size_t)7); // floor(num_heads / 8) * 8
 
+  // 1. find max for each head
   __fp16 *max_vals = new __fp16[num_heads];
+
+  // initialize max_vals with sink
+  std::memcpy(max_vals, sink, num_heads * sizeof(__fp16));
+
+  // update max_vals for each row
+  for (size_t r = start_row; r < end_row; ++r) {
+    __fp16 *row = qk_out + (num_heads * r);
+    for (size_t c = 0; c < vec_end; c += 8) {
+      float16x8_t v = vld1q_f16(row + c);
+      float16x8_t m = vld1q_f16(max_vals + c);
+      m = vmaxq_f16(v, m);
+      vst1q_f16(max_vals + c, m);
+    }
+    for (size_t c = vec_end; c < num_heads; ++c) {
+      max_vals[c] = std::max(max_vals[c], row[c]);
+    }
+  }
+
+  // 2. calc exp(x - max) and sum
   __fp16 *sum_vals = new __fp16[num_heads];
-
-  // 1. Find max value for numerical stability (Safe Softmax)
-  // Formula: Softmax(x) = Softmax(x - max(x))
-  // Iterate over columns (heads)
-  for (size_t c = 0; c < num_heads; ++c) {
-    __fp16 max_val = sink[c]; // Include sink in max calculation
-    for (size_t r = start_row; r < end_row; ++r)
-      max_val = std::max<__fp16>(max_val, qk_out[r * num_heads + c]);
-    max_vals[c] = max_val;
+  // init sum_vals with exp(sink - max)
+  {
+    for (size_t c = 0; c < vec_end; c += 8) {
+      float16x8_t v = vld1q_f16(sink + c);
+      float16x8_t m = vld1q_f16(max_vals + c);
+      float16x8_t d = vsubq_f16(v, m); // sink - max
+      float16x8_t e = exp_f16x8(d);    // exp(sink - max)
+      vst1q_f16(sum_vals + c, e);
+    }
+    for (size_t c = vec_end; c < num_heads; ++c) {
+      float e = std::exp(sink[c] - max_vals[c]);
+      sum_vals[c] = e;
+    }
   }
 
-  // 2. Compute Exponentials and Sum
-  // exp_val = exp(val - max_val)
-  // sum_val = sum(exp_val)
-  for (size_t c = 0; c < full_blocks; c += 8) {
-    float16x8_t maxv = vld1q_f16(&max_vals[c]);
-    float16x8_t sinkv = vld1q_f16(&sink[c]);
-    float16x8_t sum = exp_f16x8(vsubq_f16(sinkv, maxv)); // Include sink in sum
-
-    for (size_t r = 0; r < row_range; ++r) {
-      __fp16 *ptr = &qk_out[(start_row + r) * num_heads + c];
-      float16x8_t val = vld1q_f16(ptr);
-      float16x8_t e = exp_f16x8(vsubq_f16(val, maxv));
-      vst1q_f16(ptr, e);       // overwrite qk_out
-      sum = vaddq_f16(sum, e); // Accumulate sum
+  for (size_t r = start_row; r < end_row; ++r) {
+    __fp16 *row = qk_out + (num_heads * r);
+    for (size_t c = 0; c < vec_end; c += 8) {
+      float16x8_t s = vld1q_f16(sum_vals + c);
+      float16x8_t v = vld1q_f16(row + c);
+      float16x8_t m = vld1q_f16(max_vals + c);
+      float16x8_t d = vsubq_f16(v, m); // x - max
+      float16x8_t e = exp_f16x8(d);    // exp(x - max)
+      vst1q_f16(row + c, e);           // overwrite qk_out
+      s = vaddq_f16(s, e);             // sum += exp(x - max)
+      vst1q_f16(sum_vals + c, s);      // update sum_vals
     }
-    vst1q_f16(&sum_vals[c], sum);
+    for (size_t c = vec_end; c < num_heads; ++c) {
+      float e = std::exp(row[c] - max_vals[c]);
+      row[c] = e;
+      sum_vals[c] += e;
+    }
   }
 
-  for (size_t c = full_blocks; c < num_heads; ++c) {
-    __fp16 maxv = max_vals[c];
-    __fp16 sum = std::exp(sink[c] - maxv); // Include sink in sum
-
-    for (size_t r = 0; r < row_range; ++r) {
-      __fp16 &a = qk_out[(start_row + r) * num_heads + c];
-      a = std::exp(a - maxv); // overwrite qk_out
-      sum += a;
+  // 3. calc exp(x - max) / sum
+  for (size_t r = start_row; r < end_row; ++r) {
+    __fp16 *row = qk_out + (num_heads * r);
+    for (size_t c = 0; c < vec_end; c += 8) {
+      float16x8_t s = vld1q_f16(sum_vals + c); // sum
+      float16x8_t v = vld1q_f16(row + c);      // exp(x - max)
+      float16x8_t o = vdivq_f16(v, s);         // exp(x - max) / sum
+      vst1q_f16(row + c, o);                   // overwrite qk_out
     }
-    sum_vals[c] = sum;
-  }
-
-  // 3. Normalize to get Probabilities
-  // prob = exp_val / sum_val
-  for (size_t r = 0; r < row_range; ++r) {
-    for (size_t c = 0; c < full_blocks; c += 8) {
-      __fp16 *ptr = &qk_out[(start_row + r) * num_heads + c];
-      float16x8_t val = vld1q_f16(ptr); // already exp(x - max)
-      float16x8_t sumv = vld1q_f16(&sum_vals[c]);
-      float16x8_t soft = vdivq_f16(val, sumv);
-      vst1q_f16(ptr, soft);
-    }
-    for (size_t c = full_blocks; c < num_heads; ++c) {
-      qk_out[(start_row + r) * num_heads + c] /= sum_vals[c];
+    for (size_t c = vec_end; c < num_heads; ++c) {
+      row[c] /= sum_vals[c];
     }
   }
 
@@ -1467,56 +1489,64 @@ static void softmax_row_inplace_with_fp16_sink(__fp16 *qk_out, size_t start_row,
 // Static helper function for softmax_row_inplace without sink
 static void softmax_row_inplace_no_sink(__fp16 *qk_out, size_t start_row,
                                         size_t end_row, size_t num_heads) {
-  size_t row_range = end_row - start_row;
-  const size_t full_blocks = (num_heads / 8) * 8;
-  // const size_t remainder = num_heads % 8;
+  const size_t vec_end = num_heads & ~((size_t)7); // floor(num_heads / 8) * 8
 
+  // 1. find max for each head
   __fp16 *max_vals = new __fp16[num_heads];
+
+  // initialize max_vals with first row of qk_out
+  std::memcpy(max_vals, qk_out + start_row * num_heads,
+              num_heads * sizeof(__fp16));
+
+  // update max_vals for each row
+  for (size_t r = start_row + 1; r < end_row; ++r) {
+    __fp16 *row = qk_out + (num_heads * r);
+    for (size_t c = 0; c < vec_end; c += 8) {
+      float16x8_t v = vld1q_f16(row + c);
+      float16x8_t m = vld1q_f16(max_vals + c);
+      m = vmaxq_f16(v, m);
+      vst1q_f16(max_vals + c, m);
+    }
+    for (size_t c = vec_end; c < num_heads; ++c) {
+      max_vals[c] = std::max(max_vals[c], row[c]);
+    }
+  }
+
+  // 2. calc exp(x - max) and sum
   __fp16 *sum_vals = new __fp16[num_heads];
+  std::memset(sum_vals, 0, num_heads * sizeof(__fp16));
 
-  // 1. max
-  for (size_t c = 0; c < num_heads; ++c) {
-    __fp16 max_val = -INFINITY;
-    for (size_t r = start_row; r < end_row; ++r)
-      max_val = std::max<__fp16>(max_val, qk_out[r * num_heads + c]);
-    max_vals[c] = max_val;
+  for (size_t r = start_row; r < end_row; ++r) {
+    __fp16 *row = qk_out + (num_heads * r);
+    for (size_t c = 0; c < vec_end; c += 8) {
+      float16x8_t s = vld1q_f16(sum_vals + c);
+      float16x8_t v = vld1q_f16(row + c);
+      float16x8_t m = vld1q_f16(max_vals + c);
+      float16x8_t d = vsubq_f16(v, m); // x - max
+      float16x8_t e = exp_f16x8(d);    // exp(x - max)
+      vst1q_f16(row + c, e);           // overwrite qk_out
+      s = vaddq_f16(s, e);             // sum += exp(x - max)
+      vst1q_f16(sum_vals + c, s);      // update sum_vals
+    }
+    for (size_t c = vec_end; c < num_heads; ++c) {
+      float e = std::exp(row[c] - max_vals[c]);
+      row[c] = e;
+      sum_vals[c] += e;
+    }
   }
 
-  // 2. inplace exp + sum
-  for (size_t c = 0; c < full_blocks; c += 8) {
-    float16x8_t maxv = vld1q_f16(&max_vals[c]);
-    float16x8_t sum = vdupq_n_f16(0.0f);
-    for (size_t r = 0; r < row_range; ++r) {
-      __fp16 *ptr = &qk_out[(start_row + r) * num_heads + c];
-      float16x8_t val = vld1q_f16(ptr);
-      float16x8_t e = exp_f16x8(vsubq_f16(val, maxv));
-      vst1q_f16(ptr, e); // overwrite qk_out
-      sum = vaddq_f16(sum, e);
-    }
-    vst1q_f16(&sum_vals[c], sum);
-  }
+  // 3. calc exp(x - max) / sum
+  for (size_t r = start_row; r < end_row; ++r) {
+    __fp16 *row = qk_out + (num_heads * r);
+    for (size_t c = 0; c < vec_end; c += 8) {
 
-  for (size_t c = full_blocks; c < num_heads; ++c) {
-    __fp16 sum = 0.0f;
-    __fp16 maxv = max_vals[c];
-    for (size_t r = 0; r < row_range; ++r) {
-      __fp16 &a = qk_out[(start_row + r) * num_heads + c];
-      a = std::exp(a - maxv); // overwrite qk_out
-      sum += a;
+      float16x8_t s = vld1q_f16(sum_vals + c); // sum
+      float16x8_t v = vld1q_f16(row + c);      // exp(x - max)
+      float16x8_t o = vdivq_f16(v, s);         // exp(x - max) / sum
+      vst1q_f16(row + c, o);                   // overwrite qk_out
     }
-    sum_vals[c] = sum;
-  }
-  // 3. softmax = exp / sum (inplace)
-  for (size_t r = 0; r < row_range; ++r) {
-    for (size_t c = 0; c < full_blocks; c += 8) {
-      __fp16 *ptr = &qk_out[(start_row + r) * num_heads + c];
-      float16x8_t val = vld1q_f16(ptr); // already exp(x - max)
-      float16x8_t sumv = vld1q_f16(&sum_vals[c]);
-      float16x8_t soft = vdivq_f16(val, sumv);
-      vst1q_f16(ptr, soft);
-    }
-    for (size_t c = full_blocks; c < num_heads; ++c) {
-      qk_out[(start_row + r) * num_heads + c] /= sum_vals[c];
+    for (size_t c = vec_end; c < num_heads; ++c) {
+      row[c] /= sum_vals[c];
     }
   }
 
@@ -1539,97 +1569,145 @@ void softmax_row_inplace(__fp16 *qk_out, size_t start_row, size_t end_row,
 static void softmax_row_inplace_with_fp32_sink(__fp16 *qk_out, size_t start_row,
                                                size_t end_row, size_t num_heads,
                                                float *sink) {
-  size_t row_range = end_row - start_row;
-  const size_t full_blocks = (num_heads / 8) * 8;
 
+  const size_t vec_end = num_heads & ~((size_t)7); // floor(num_heads / 8) * 8
+
+  // 1. find max for each head
   float *max_vals = new float[num_heads];
+
+  // initialize max_vals with sink
+  std::memcpy(max_vals, sink, num_heads * sizeof(float));
+
+  // update max_vals for each row
+  for (size_t r = start_row; r < end_row; ++r) {
+    __fp16 *row = qk_out + (num_heads * r);
+    for (size_t c = 0; c < vec_end; c += 8) {
+      float16x8_t v = vld1q_f16(row + c);
+      float32x4_t v_lo = vcvt_f32_f16(vget_low_f16(v));
+      float32x4_t v_hi = vcvt_high_f32_f16(v);
+
+      float32x4_t m_lo = vld1q_f32(max_vals + c);
+      float32x4_t m_hi = vld1q_f32(max_vals + c + 4);
+
+      m_lo = vmaxq_f32(v_lo, m_lo);
+      m_hi = vmaxq_f32(v_hi, m_hi);
+
+      vst1q_f32(max_vals + c, m_lo);
+      vst1q_f32(max_vals + c + 4, m_hi);
+    }
+    for (size_t c = vec_end; c < num_heads; ++c) {
+      max_vals[c] = std::max(max_vals[c], static_cast<float>(row[c]));
+    }
+  }
+
+  // 2. calc exp(x - max) and sum
   float *sum_vals = new float[num_heads];
+  // init sum_vals with exp(sink - max)
+  {
+    for (size_t c = 0; c < vec_end; c += 8) {
+      float32x4_t v_lo = vld1q_f32(sink + c);
+      float32x4_t v_hi = vld1q_f32(sink + c + 4);
 
-  // 1. max (including sink)
-  for (size_t c = 0; c < num_heads; ++c) {
-    float max_val = sink[c]; // Include sink in max calculation
-    for (size_t r = start_row; r < end_row; ++r) {
-      float val = static_cast<float>(qk_out[r * num_heads + c]);
-      max_val = std::max(max_val, val);
+      float32x4_t m_lo = vld1q_f32(max_vals + c);
+      float32x4_t m_hi = vld1q_f32(max_vals + c + 4);
+
+      // sink - max
+      float32x4_t d_lo = vsubq_f32(v_lo, m_lo);
+      float32x4_t d_hi = vsubq_f32(v_hi, m_hi);
+
+      // exp(sink - max)
+      float32x4_t e_lo = exp_ps(d_lo);
+      float32x4_t e_hi = exp_ps(d_hi);
+
+      vst1q_f32(sum_vals + c, e_lo);
+      vst1q_f32(sum_vals + c + 4, e_hi);
     }
-    max_vals[c] = max_val;
+    for (size_t c = vec_end; c < num_heads; ++c) {
+      float e = std::exp(sink[c] - max_vals[c]);
+      sum_vals[c] = e;
+    }
   }
 
-  // 2. inplace exp + sum (including sink)
-  for (size_t c = 0; c < full_blocks; c += 8) {
-    float32x4_t maxv_low = vld1q_f32(&max_vals[c]);
-    float32x4_t maxv_high = vld1q_f32(&max_vals[c + 4]);
-    float32x4_t sinkv_low = vld1q_f32(&sink[c]);
-    float32x4_t sinkv_high = vld1q_f32(&sink[c + 4]);
+  for (size_t r = start_row; r < end_row; ++r) {
+    __fp16 *row = qk_out + (num_heads * r);
+    for (size_t c = 0; c < vec_end; c += 8) {
+      float32x4_t s_lo = vld1q_f32(sum_vals + c);
+      float32x4_t s_hi = vld1q_f32(sum_vals + c + 4);
 
-    // Calculate exp(sink - max) for sum initialization
-    float32x4_t sum_low = exp_ps(vsubq_f32(sinkv_low, maxv_low));
-    float32x4_t sum_high = exp_ps(vsubq_f32(sinkv_high, maxv_high));
+      float16x8_t v = vld1q_f16(row + c);
+      float32x4_t v_lo = vcvt_f32_f16(vget_low_f16(v));
+      float32x4_t v_hi = vcvt_high_f32_f16(v);
 
-    for (size_t r = 0; r < row_range; ++r) {
-      __fp16 *ptr = &qk_out[(start_row + r) * num_heads + c];
-      float16x8_t val_fp16 = vld1q_f16(ptr);
+      float32x4_t m_lo = vld1q_f32(max_vals + c);
+      float32x4_t m_hi = vld1q_f32(max_vals + c + 4);
 
-      // Convert to float32 for computation
-      float32x4_t val_low = vcvt_f32_f16(vget_low_f16(val_fp16));
-      float32x4_t val_high = vcvt_f32_f16(vget_high_f16(val_fp16));
+      // x - max
+      float32x4_t d_lo = vsubq_f32(v_lo, m_lo);
+      float32x4_t d_hi = vsubq_f32(v_hi, m_hi);
 
-      // Compute exp(val - max)
-      float32x4_t e_low = exp_ps(vsubq_f32(val_low, maxv_low));
-      float32x4_t e_high = exp_ps(vsubq_f32(val_high, maxv_high));
+      // exp(x - max)
+      float32x4_t e_lo = exp_ps(d_lo);
+      float32x4_t e_hi = exp_ps(d_hi);
 
-      // Convert back to fp16 and store
-      float16x8_t e_fp16 =
-        vcombine_f16(vcvt_f16_f32(e_low), vcvt_f16_f32(e_high));
-      vst1q_f16(ptr, e_fp16);
+      // sum += exp(x - max)
+      s_lo = vaddq_f32(s_lo, e_lo);
+      s_hi = vaddq_f32(s_hi, e_hi);
 
-      // Accumulate sum
-      sum_low = vaddq_f32(sum_low, e_low);
-      sum_high = vaddq_f32(sum_high, e_high);
+      // update sum_vals
+      vst1q_f32(sum_vals + c, s_lo);
+      vst1q_f32(sum_vals + c + 4, s_hi);
+
+      // overwrite qk_out
+      vst1q_f16(row + c, vcombine_f16(vcvt_f16_f32(e_lo), vcvt_f16_f32(e_hi)));
     }
-
-    vst1q_f32(&sum_vals[c], sum_low);
-    vst1q_f32(&sum_vals[c + 4], sum_high);
+    for (size_t c = vec_end; c < num_heads; ++c) {
+      float e = std::exp(static_cast<float>(row[c]) - max_vals[c]);
+      sum_vals[c] += e;
+      row[c] = static_cast<__fp16>(e);
+    }
   }
 
-  for (size_t c = full_blocks; c < num_heads; ++c) {
-    float maxv = max_vals[c];
-    float sum = std::exp(sink[c] - maxv); // Include sink in sum
+  // 3. calc 1/sum
+  // vdivq_f32 is slow
+  // precalculate (1/sum) and then multiply is much faster
+  // If accuracy matters, use direct division instead
+  for (size_t c = 0; c < vec_end; c += 8) {
+    float32x4_t s_lo = vld1q_f32(sum_vals + c);
+    float32x4_t s_hi = vld1q_f32(sum_vals + c + 4);
 
-    for (size_t r = 0; r < row_range; ++r) {
-      __fp16 &a = qk_out[(start_row + r) * num_heads + c];
-      float val = static_cast<float>(a);
-      float e = std::exp(val - maxv);
-      a = static_cast<__fp16>(e); // overwrite qk_out with exp value
-      sum += e;
-    }
-    sum_vals[c] = sum;
+    // sum = 1/sum
+    s_lo = rcp_ps(s_lo);
+    s_hi = rcp_ps(s_hi);
+
+    vst1q_f32(sum_vals + c, s_lo);
+    vst1q_f32(sum_vals + c + 4, s_hi);
+  }
+  for (size_t c = vec_end; c < num_heads; ++c) {
+    sum_vals[c] = 1 / sum_vals[c];
   }
 
-  // 3. softmax = exp / sum (inplace)
-  for (size_t r = 0; r < row_range; ++r) {
-    for (size_t c = 0; c < full_blocks; c += 8) {
-      __fp16 *ptr = &qk_out[(start_row + r) * num_heads + c];
-      float16x8_t val_fp16 = vld1q_f16(ptr); // already exp(x - max)
+  // 4. calc exp(x - max) * (1/sum)
+  for (size_t r = start_row; r < end_row; ++r) {
+    __fp16 *row = qk_out + (num_heads * r);
+    for (size_t c = 0; c < vec_end; c += 8) {
+      // 1/sum
+      float32x4_t s_lo = vld1q_f32(sum_vals + c);
+      float32x4_t s_hi = vld1q_f32(sum_vals + c + 4);
 
-      // Convert to float32 for division
-      float32x4_t val_low = vcvt_f32_f16(vget_low_f16(val_fp16));
-      float32x4_t val_high = vcvt_f32_f16(vget_high_f16(val_fp16));
+      // exp(x - max)
+      float16x8_t v = vld1q_f16(row + c);
+      float32x4_t v_lo = vcvt_f32_f16(vget_low_f16(v));
+      float32x4_t v_hi = vcvt_high_f32_f16(v);
 
-      float32x4_t sumv_low = vld1q_f32(&sum_vals[c]);
-      float32x4_t sumv_high = vld1q_f32(&sum_vals[c + 4]);
+      // exp(x - max) * (1/sum)
+      float32x4_t o_lo = vmulq_f32(v_lo, s_lo);
+      float32x4_t o_hi = vmulq_f32(v_hi, s_hi);
 
-      float32x4_t soft_low = vdivq_f32(val_low, sumv_low);
-      float32x4_t soft_high = vdivq_f32(val_high, sumv_high);
-
-      // Convert back to fp16 and store
-      float16x8_t soft_fp16 =
-        vcombine_f16(vcvt_f16_f32(soft_low), vcvt_f16_f32(soft_high));
-      vst1q_f16(ptr, soft_fp16);
+      // overwrite qk_out
+      vst1q_f16(row + c, vcombine_f16(vcvt_f16_f32(o_lo), vcvt_f16_f32(o_hi)));
     }
-    for (size_t c = full_blocks; c < num_heads; ++c) {
-      __fp16 &val = qk_out[(start_row + r) * num_heads + c];
-      val = static_cast<__fp16>(static_cast<float>(val) / sum_vals[c]);
+    for (size_t c = vec_end; c < num_heads; ++c) {
+      row[c] = static_cast<__fp16>(static_cast<float>(row[c]) * sum_vals[c]);
     }
   }
 
@@ -1652,121 +1730,14 @@ void softmax_row_inplace(__fp16 *qk_out, size_t start_row, size_t end_row,
 static void softmax_row_with_fp16_sink(__fp16 *qk_out, size_t start_row,
                                        size_t end_row, size_t num_heads,
                                        __fp16 *sink) {
-  const size_t full_block = (num_heads / 8) * 8;
-
-  __fp16 *max_vals = new __fp16[num_heads];
-  __fp16 *sum_vals = new __fp16[num_heads];
-
-  // 1. Find Max along with col (including sink)
-  for (size_t c = 0; c < num_heads; ++c) {
-    __fp16 max_val = sink[c];
-    for (size_t r = start_row; r < end_row; ++r) {
-      max_val = std::max<__fp16>(max_val, qk_out[r * num_heads + c]);
-    }
-    max_vals[c] = max_val;
-  }
-
-  // 2. Compute sum along with col (exp vectorized, including sink)
-  for (size_t c = 0; c < full_block; c += 8) {
-    float16x8_t maxv = vld1q_f16(&max_vals[c]);
-    float16x8_t sinkv = vld1q_f16(&sink[c]);
-    float16x8_t sum = exp_f16x8(vsubq_f16(sinkv, maxv)); // Include sink in sum
-
-    for (size_t r = start_row; r < end_row; ++r) {
-      float16x8_t val = vld1q_f16(&qk_out[r * num_heads + c]);
-      float16x8_t sub = vsubq_f16(val, maxv);
-      float16x8_t e = exp_f16x8(sub);
-      sum = vaddq_f16(sum, e);
-    }
-    vst1q_f16(&sum_vals[c], sum);
-  }
-
-  for (size_t c = full_block; c < num_heads; ++c) {
-    float sum = std::exp(sink[c] - max_vals[c]); // Include sink in sum
-    for (size_t r = start_row; r < end_row; ++r) {
-      sum += std::exp(qk_out[r * num_heads + c] - max_vals[c]);
-    }
-    sum_vals[c] = sum;
-  }
-
-  // 3. apply softmax
-  for (size_t r = start_row; r < end_row; ++r) {
-    for (size_t c = 0; c < full_block; c += 8) {
-      float16x8_t val = vld1q_f16(&qk_out[r * num_heads + c]);
-      float16x8_t maxv = vld1q_f16(&max_vals[c]);
-      float16x8_t sub = vsubq_f16(val, maxv);
-      float16x8_t e = exp_f16x8(sub);
-      float16x8_t sumv = vld1q_f16(&sum_vals[c]);
-      float16x8_t softmax = vdivq_f16(e, sumv);
-      vst1q_f16(&qk_out[r * num_heads + c], softmax);
-    }
-    for (size_t c = full_block; c < num_heads; ++c) {
-      qk_out[r * num_heads + c] =
-        std::exp(qk_out[r * num_heads + c] - max_vals[c]) / sum_vals[c];
-    }
-  }
-
-  delete[] max_vals;
-  delete[] sum_vals;
+  softmax_row_inplace_with_fp16_sink(qk_out, start_row, end_row, num_heads,
+                                     sink);
 }
 
 // Static helper function for softmax_row without sink
 static void softmax_row_no_sink(__fp16 *qk_out, size_t start_row,
                                 size_t end_row, size_t num_heads) {
-  const size_t full_block = (num_heads / 8) * 8;
-
-  __fp16 *max_vals = new __fp16[num_heads];
-  __fp16 *sum_vals = new __fp16[num_heads];
-
-  // 1. Find Max along with col
-  for (size_t c = 0; c < num_heads; ++c) {
-    __fp16 max_val = -INFINITY;
-    for (size_t r = start_row; r < end_row; ++r) {
-      max_val = std::max<__fp16>(max_val, qk_out[r * num_heads + c]);
-    }
-    max_vals[c] = max_val;
-  }
-
-  // 2. Compute sum along with col (exp vectorized)
-  for (size_t c = 0; c < full_block; c += 8) {
-    float16x8_t sum = vdupq_n_f16(0.0f);
-    for (size_t r = start_row; r < end_row; ++r) {
-      float16x8_t val = vld1q_f16(&qk_out[r * num_heads + c]);
-      float16x8_t maxv = vld1q_f16(&max_vals[c]);
-      float16x8_t sub = vsubq_f16(val, maxv);
-      float16x8_t e = exp_f16x8(sub);
-      sum = vaddq_f16(sum, e);
-    }
-    vst1q_f16(&sum_vals[c], sum);
-  }
-
-  for (size_t c = full_block; c < num_heads; ++c) {
-    float sum = 0.0f;
-    for (size_t r = start_row; r < end_row; ++r) {
-      sum += std::exp(qk_out[r * num_heads + c] - max_vals[c]);
-    }
-    sum_vals[c] = sum;
-  }
-
-  // 3. apply softmax
-  for (size_t r = start_row; r < end_row; ++r) {
-    for (size_t c = 0; c < full_block; c += 8) {
-      float16x8_t val = vld1q_f16(&qk_out[r * num_heads + c]);
-      float16x8_t maxv = vld1q_f16(&max_vals[c]);
-      float16x8_t sub = vsubq_f16(val, maxv);
-      float16x8_t e = exp_f16x8(sub);
-      float16x8_t sumv = vld1q_f16(&sum_vals[c]);
-      float16x8_t softmax = vdivq_f16(e, sumv);
-      vst1q_f16(&qk_out[r * num_heads + c], softmax);
-    }
-    for (size_t c = full_block; c < num_heads; ++c) {
-      qk_out[r * num_heads + c] =
-        std::exp(qk_out[r * num_heads + c] - max_vals[c]) / sum_vals[c];
-    }
-  }
-
-  delete[] max_vals;
-  delete[] sum_vals;
+  softmax_row_inplace_no_sink(qk_out, start_row, end_row, num_heads);
 }
 
 template <>
@@ -1784,101 +1755,8 @@ void softmax_row(__fp16 *qk_out, size_t start_row, size_t end_row,
 static void softmax_row_with_fp32_sink(__fp16 *qk_out, size_t start_row,
                                        size_t end_row, size_t num_heads,
                                        float *sink) {
-  const size_t full_block = (num_heads / 8) * 8;
-
-  float *max_vals = new float[num_heads];
-  float *sum_vals = new float[num_heads];
-
-  // 1. Find Max along with col (including sink)
-  for (size_t c = 0; c < num_heads; ++c) {
-    float max_val = sink[c];
-    for (size_t r = start_row; r < end_row; ++r) {
-      float val = static_cast<float>(qk_out[r * num_heads + c]);
-      max_val = std::max(max_val, val);
-    }
-    max_vals[c] = max_val;
-  }
-
-  // 2. Compute sum along with col (exp vectorized, including sink)
-  for (size_t c = 0; c < full_block; c += 8) {
-    float32x4_t maxv_low = vld1q_f32(&max_vals[c]);
-    float32x4_t maxv_high = vld1q_f32(&max_vals[c + 4]);
-    float32x4_t sinkv_low = vld1q_f32(&sink[c]);
-    float32x4_t sinkv_high = vld1q_f32(&sink[c + 4]);
-
-    // Calculate exp(sink - max) for sum initialization
-    float32x4_t sum_low = exp_ps(vsubq_f32(sinkv_low, maxv_low));
-    float32x4_t sum_high = exp_ps(vsubq_f32(sinkv_high, maxv_high));
-
-    for (size_t r = start_row; r < end_row; ++r) {
-      float16x8_t val_fp16 = vld1q_f16(&qk_out[r * num_heads + c]);
-
-      // Convert to float32 for computation
-      float32x4_t val_low = vcvt_f32_f16(vget_low_f16(val_fp16));
-      float32x4_t val_high = vcvt_f32_f16(vget_high_f16(val_fp16));
-
-      float32x4_t sub_low = vsubq_f32(val_low, maxv_low);
-      float32x4_t sub_high = vsubq_f32(val_high, maxv_high);
-
-      float32x4_t e_low = exp_ps(sub_low);
-      float32x4_t e_high = exp_ps(sub_high);
-
-      sum_low = vaddq_f32(sum_low, e_low);
-      sum_high = vaddq_f32(sum_high, e_high);
-    }
-
-    vst1q_f32(&sum_vals[c], sum_low);
-    vst1q_f32(&sum_vals[c + 4], sum_high);
-  }
-
-  for (size_t c = full_block; c < num_heads; ++c) {
-    float maxv = max_vals[c];
-    float sum = std::exp(sink[c] - maxv); // Include sink in sum
-    for (size_t r = start_row; r < end_row; ++r) {
-      float val = static_cast<float>(qk_out[r * num_heads + c]);
-      sum += std::exp(val - maxv);
-    }
-    sum_vals[c] = sum;
-  }
-
-  // 3. apply softmax
-  for (size_t r = start_row; r < end_row; ++r) {
-    for (size_t c = 0; c < full_block; c += 8) {
-      float16x8_t val_fp16 = vld1q_f16(&qk_out[r * num_heads + c]);
-
-      // Convert to float32 for computation
-      float32x4_t val_low = vcvt_f32_f16(vget_low_f16(val_fp16));
-      float32x4_t val_high = vcvt_f32_f16(vget_high_f16(val_fp16));
-
-      float32x4_t maxv_low = vld1q_f32(&max_vals[c]);
-      float32x4_t maxv_high = vld1q_f32(&max_vals[c + 4]);
-
-      float32x4_t sub_low = vsubq_f32(val_low, maxv_low);
-      float32x4_t sub_high = vsubq_f32(val_high, maxv_high);
-
-      float32x4_t e_low = exp_ps(sub_low);
-      float32x4_t e_high = exp_ps(sub_high);
-
-      float32x4_t sumv_low = vld1q_f32(&sum_vals[c]);
-      float32x4_t sumv_high = vld1q_f32(&sum_vals[c + 4]);
-
-      float32x4_t softmax_low = vdivq_f32(e_low, sumv_low);
-      float32x4_t softmax_high = vdivq_f32(e_high, sumv_high);
-
-      // Convert back to fp16 and store
-      float16x8_t softmax_fp16 =
-        vcombine_f16(vcvt_f16_f32(softmax_low), vcvt_f16_f32(softmax_high));
-      vst1q_f16(&qk_out[r * num_heads + c], softmax_fp16);
-    }
-    for (size_t c = full_block; c < num_heads; ++c) {
-      float val = static_cast<float>(qk_out[r * num_heads + c]);
-      qk_out[r * num_heads + c] =
-        static_cast<__fp16>(std::exp(val - max_vals[c]) / sum_vals[c]);
-    }
-  }
-
-  delete[] max_vals;
-  delete[] sum_vals;
+  softmax_row_inplace_with_fp32_sink(qk_out, start_row, end_row, num_heads,
+                                     sink);
 }
 
 // Overloaded function for softmax_row with __fp16 input and float sink
@@ -2377,66 +2255,73 @@ static __fp16 hsumq_f16(float16x8_t v) {
   return vget_lane_f16(s1, 0);
 }
 
+// Native FP16-in / FP16-out RMS-norm-over-width.
+//
+// Sum-of-squares is accumulated in FP32 (two float32x4 vectors per 8-lane
+// load) instead of FP16: the residual stream of deep decoder layers can
+// reach magnitudes around 1e3, so squared accumulation across a 1024-wide
+// row would overflow FP16's 65504 ceiling. Scale derivation uses scalar
+// FP32 sqrt; the per-lane normalize multiply stays in FP16 with no
+// FP32<->FP16 conversion of the input/output buffers (the whole point of
+// having a native FP16 kernel here).
+template <>
+void rms_norm_wrt_width_fp16_intrinsic(const _FP16 *__restrict X,
+                                       _FP16 *__restrict Y, size_t H, size_t W,
+                                       float epsilon) {
+  for (size_t h = 0; h < H; ++h) {
+    const _FP16 *rowX = X + h * W;
+    _FP16 *rowY = Y + h * W;
+
+    size_t i = 0;
+    float32x4_t acc0 = vdupq_n_f32(0.F);
+    float32x4_t acc1 = vdupq_n_f32(0.F);
+
+    for (; i + 8 <= W; i += 8) {
+      float16x8_t h8 = vld1q_f16(rowX + i);
+      float32x4_t f0 = vcvt_f32_f16(vget_low_f16(h8));
+      float32x4_t f1 = vcvt_f32_f16(vget_high_f16(h8));
+      acc0 = vfmaq_f32(acc0, f0, f0);
+      acc1 = vfmaq_f32(acc1, f1, f1);
+    }
+    if (i + 4 <= W) {
+      float16x4_t h4 = vld1_f16(rowX + i);
+      float32x4_t f = vcvt_f32_f16(h4);
+      acc0 = vfmaq_f32(acc0, f, f);
+      i += 4;
+    }
+    float sum = vaddvq_f32(vaddq_f32(acc0, acc1));
+    for (; i < W; ++i) {
+      float x = (float)rowX[i];
+      sum += x * x;
+    }
+
+    float mean_single = sum / (float)W;
+    float scale_single = 1.F / std::sqrt(mean_single + epsilon);
+    float16x8_t scale_v = vdupq_n_f16((__fp16)scale_single);
+    float16x4_t scale_v4 = vdup_n_f16((__fp16)scale_single);
+
+    i = 0;
+    for (; i + 8 <= W; i += 8) {
+      float16x8_t xh = vld1q_f16(rowX + i);
+      vst1q_f16(rowY + i, vmulq_f16(xh, scale_v));
+    }
+    if (i + 4 <= W) {
+      float16x4_t xh4 = vld1_f16(rowX + i);
+      vst1_f16(rowY + i, vmul_f16(xh4, scale_v4));
+      i += 4;
+    }
+    for (; i < W; ++i) {
+      rowY[i] = (__fp16)((float)rowX[i] * scale_single);
+    }
+  }
+}
+
 template <>
 void rms_norm_wrt_width_fp16_intrinsic(const float *__restrict X,
                                        float *__restrict Y, size_t H, size_t W,
                                        float epsilon) {
-  const float eps_h = (float)epsilon;
-
-  for (size_t h = 0; h < H; ++h) {
-    const float *rowX = X + h * W;
-    float *rowY = Y + h * W;
-
-    size_t i = 0;
-    float16x8_t acc = vdupq_n_f16(0.F);
-
-    for (; i + 8 <= W; i += 8) {
-      float32x4_t f0 = vld1q_f32(rowX + i + 0);
-      float32x4_t f1 = vld1q_f32(rowX + i + 4);
-      float16x4_t h0 = vcvt_f16_f32(f0);
-      float16x4_t h1 = vcvt_f16_f32(f1);
-      float16x8_t h8 = vcombine_f16(h0, h1);
-      acc = vfmaq_f16(acc, h8, h8);
-    }
-
-    if (i + 4 <= W) {
-      float32x4_t f = vld1q_f32(rowX + i);
-      float16x4_t h4 = vcvt_f16_f32(f);
-      float16x4_t p4 = vmul_f16(h4, h4);
-      acc = vaddq_f16(acc, vcombine_f16(p4, vdup_n_f16(0.F)));
-      i += 4;
-    }
-
-    __fp16 sum_h = hsumq_f16(acc);
-    for (; i < W; ++i) {
-      float hx = (float)rowX[i];
-      sum_h = sum_h + hx * hx;
-    }
-
-    float mean_single = sum_h / W;
-    float scale_single = 1.F / std::sqrt(mean_single + eps_h);
-    float16x8_t scale_v = vdupq_n_f16(scale_single);
-
-    i = 0;
-    for (; i + 8 <= W; i += 8) {
-      float32x4_t f0 = vld1q_f32(rowX + i + 0);
-      float32x4_t f1 = vld1q_f32(rowX + i + 4);
-      float16x8_t xh = vcombine_f16(vcvt_f16_f32(f0), vcvt_f16_f32(f1));
-      float16x8_t yh = vmulq_f16(xh, scale_v);
-
-      vst1q_f32(rowY + i + 0, vcvt_f32_f16(vget_low_f16(yh)));
-      vst1q_f32(rowY + i + 4, vcvt_f32_f16(vget_high_f16(yh)));
-    }
-    if (i + 4 <= W) {
-      float32x4_t f = vld1q_f32(rowX + i);
-      float16x4_t y4 = vmul_f16(vcvt_f16_f32(f), vget_low_f16(scale_v));
-      vst1q_f32(rowY + i, vcvt_f32_f16(y4));
-      i += 4;
-    }
-    for (; i < W; ++i) {
-      rowY[i] = rowX[i] * scale_single;
-    }
-  }
+  throw std::runtime_error("ERROR : rms_norm_wrt_width_fp16_intrinsic(float *) "
+                           "is deprecated due to overflow in fp16");
 }
 
 static inline float16x8_t vbslq_f16_u16(uint16x8_t m, float16x8_t a,
